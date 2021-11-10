@@ -1,6 +1,7 @@
 from qtpy.QtCore import QModelIndex, QSize, Qt
 from qtpy.QtGui import QImage
 
+from ..._vispy.thumbnail import VispyThumbnail
 from ...layers import Layer
 from .qt_list_model import QtListModel
 
@@ -8,6 +9,24 @@ ThumbnailRole = Qt.UserRole + 2
 
 
 class QtLayerListModel(QtListModel[Layer]):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._layer_to_thumbnail = dict()
+
+    def _get_thumbnail(self, layer: Layer) -> QImage:
+        # Ideally would reuse VispyThumbnail object, but this causes OpenGL
+        # issues possibly related to the active canvas.
+        # if layer not in self._layer_to_thumbnail:
+        self._layer_to_thumbnail[layer] = VispyThumbnail(layer)
+        thumbnail = self._layer_to_thumbnail[layer]
+        image = thumbnail.get_image()
+        return QImage(
+            image,
+            image.shape[1],
+            image.shape[0],
+            QImage.Format_RGBA8888,
+        )
+
     def data(self, index: QModelIndex, role: Qt.ItemDataRole):
         """Return data stored under ``role`` for the item at ``index``."""
         layer = self.getItem(index)
@@ -24,13 +43,7 @@ class QtLayerListModel(QtListModel[Layer]):
         if role == Qt.SizeHintRole:  # determines size of item
             return QSize(200, 34)
         if role == ThumbnailRole:  # return the thumbnail
-            thumbnail = layer.thumbnail
-            return QImage(
-                thumbnail,
-                thumbnail.shape[1],
-                thumbnail.shape[0],
-                QImage.Format_RGBA8888,
-            )
+            return self._get_thumbnail(layer)
         # normally you'd put the icon in DecorationRole, but we do that in the
         # # LayerDelegate which is aware of the theme.
         # if role == Qt.DecorationRole:  # icon to show

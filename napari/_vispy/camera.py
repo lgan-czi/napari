@@ -5,7 +5,7 @@ from .utils.quaternion import quaternion2euler
 
 
 class VispyCamera:
-    """Vipsy camera for both 2D and 3D rendering.
+    """Vispy camera for both 2D and 3D rendering.
 
     Parameters
     ----------

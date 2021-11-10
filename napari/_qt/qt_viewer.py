@@ -536,7 +536,7 @@ class QtViewer(QSplitter):
 
         # QtPoll is experimental.
         if self._qt_poll is not None:
-            # QtPoll will call VipyBaseImage._on_poll() when the camera
+            # QtPoll will call VispyBaseLayer._on_poll() when the camera
             # moves or the timer goes off.
             self._qt_poll.events.poll.connect(vispy_layer._on_poll)
 
