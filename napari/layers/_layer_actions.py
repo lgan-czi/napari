@@ -17,7 +17,7 @@ from typing import (
 )
 
 import numpy as np
-from typing_extensions import TypedDict
+from typing import TypedDict
 
 from ..utils._injection import inject_napari_dependencies
 from ..utils.context._layerlist_context import LayerListContextKeys as LLCK

@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Callable, List, Union
 from qtpy.QtWidgets import QAction, QMenu
 
 if TYPE_CHECKING:
-    from typing_extensions import TypedDict
+    from typing import TypedDict
 
     from ...utils.events import EventEmitter
 

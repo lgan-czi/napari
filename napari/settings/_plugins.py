@@ -2,7 +2,7 @@ from enum import Enum
 from typing import Dict, List, Set
 
 from pydantic import Field
-from typing_extensions import TypedDict
+from typing import TypedDict
 
 from ..utils.misc import running_as_bundled_app, running_as_constructor_app
 from ..utils.translations import trans

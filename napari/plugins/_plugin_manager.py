@@ -21,7 +21,7 @@ from napari_plugin_engine import HookImplementation
 from napari_plugin_engine import PluginManager as PluginManager
 from napari_plugin_engine.hooks import HookCaller
 from pydantic import ValidationError
-from typing_extensions import TypedDict
+from typing import TypedDict
 
 from ..settings import get_settings
 from ..types import AugmentedWidget, LayerData, SampleDict, WidgetCallable

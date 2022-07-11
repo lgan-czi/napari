@@ -16,7 +16,7 @@ from typing import (
 )
 
 import numpy as np
-from typing_extensions import TypedDict, get_args
+from typing import TypedDict, get_args
 
 if TYPE_CHECKING:
     import dask.array
@@ -31,7 +31,7 @@ except ImportError:
     # Reference: https://docs.scipy.org/doc/numpy/reference/arrays.dtypes.html
     from typing import TypeVar
 
-    from typing_extensions import Protocol
+    from typing import Protocol
 
     _DType_co = TypeVar("_DType_co", covariant=True, bound=np.dtype)
 

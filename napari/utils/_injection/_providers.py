@@ -1,6 +1,6 @@
 from typing import Callable, Dict, Optional, Type, TypeVar, Union
 
-from typing_extensions import get_args, get_origin, get_type_hints
+from typing import get_args, get_origin, get_type_hints
 
 from ... import components, layers, viewer
 
