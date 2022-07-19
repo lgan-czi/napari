@@ -3,10 +3,9 @@ Internal napari hook implementations to be registered by the plugin manager
 """
 import os
 import shutil
-from typing import Any, List, Optional, Union
+from typing import Any, List, Optional, Sequence, Union
 
 import numpy as np
-from napari_plugin_engine import napari_hook_implementation
 
 from ..types import (
     FullLayerData,
@@ -26,8 +25,8 @@ from ..utils.io import (
 from ..utils.misc import abspath_or_url
 
 
-def csv_reader_function(path: Union[str, List[str]]) -> List[LayerData]:
-    if isinstance(path, list):
+def csv_reader_function(path: Union[str, Sequence[str]]) -> List[LayerData]:
+    if not isinstance(path, str):
         out: List[LayerData] = []
         for p in path:
             layer_data = csv_to_layer_data(p, require_type=None)
@@ -39,12 +38,13 @@ def csv_reader_function(path: Union[str, List[str]]) -> List[LayerData]:
         return [layer_data] if layer_data else []
 
 
-def npy_to_layer_data(path: str) -> List[LayerData]:
-    data = np.load(path)
-    return [(data,)]
+def npy_to_layer_data(path: Union[str, Sequence[str]]) -> List[LayerData]:
+    if isinstance(path, str):
+        return [(np.load(path),)]
+
+    return [(np.load(p),) for p in path]
 
 
-@napari_hook_implementation(trylast=True)
 def napari_get_reader(path: Union[str, List[str]]) -> Optional[ReaderFunction]:
     """Our internal fallback file reader at the end of the reader plugin chain.
 
@@ -73,8 +73,9 @@ def napari_get_reader(path: Union[str, List[str]]) -> Optional[ReaderFunction]:
     if all(str(x).lower().endswith(tuple(READER_EXTENSIONS)) for x in path):
         return image_reader_to_layerdata_reader(magic_imread)
 
+    return None
 
-@napari_hook_implementation(trylast=True)
+
 def napari_write_image(path: str, data: Any, meta: dict) -> Optional[str]:
     """Our internal fallback image writer at the end of the plugin chain.
 
@@ -104,8 +105,9 @@ def napari_write_image(path: str, data: Any, meta: dict) -> Optional[str]:
         imsave(path, data)
         return path
 
+    return None
 
-@napari_hook_implementation(trylast=True)
+
 def napari_write_labels(path: str, data: Any, meta: dict) -> Optional[str]:
     """Our internal fallback labels writer at the end of the plugin chain.
 
@@ -130,7 +132,6 @@ def napari_write_labels(path: str, data: Any, meta: dict) -> Optional[str]:
     return napari_write_image(path, np.asarray(data, dtype=dtype), meta)
 
 
-@napari_hook_implementation(trylast=True)
 def napari_write_points(path: str, data: Any, meta: dict) -> Optional[str]:
     """Our internal fallback points writer at the end of the plugin chain.
 
@@ -153,15 +154,12 @@ def napari_write_points(path: str, data: Any, meta: dict) -> Optional[str]:
     """
     ext = os.path.splitext(path)[1]
     if ext == '':
-        path = path + '.csv'
+        path += '.csv'
     elif ext != '.csv':
         # If an extension is provided then it must be `.csv`
-        return
+        return None
 
-    if 'properties' in meta:
-        properties = meta['properties']
-    else:
-        properties = {}
+    properties = meta.get('properties', {})
     # TODO: we need to change this to the axis names once we get access to them
     # construct table from data
     column_names = ['axis-' + str(n) for n in range(data.shape[1])]
@@ -183,7 +181,6 @@ def napari_write_points(path: str, data: Any, meta: dict) -> Optional[str]:
     return path
 
 
-@napari_hook_implementation(trylast=True)
 def napari_write_shapes(path: str, data: Any, meta: dict) -> Optional[str]:
     """Our internal fallback points writer at the end of the plugin chain.
 
@@ -207,23 +204,19 @@ def napari_write_shapes(path: str, data: Any, meta: dict) -> Optional[str]:
     """
     ext = os.path.splitext(path)[1]
     if ext == '':
-        path = path + '.csv'
+        path += '.csv'
     elif ext != '.csv':
         # If an extension is provided then it must be `.csv`
-        return
+        return None
 
-    if 'shape_type' in meta:
-        shape_type = meta['shape_type']
-    else:
-        shape_type = ['rectangle'] * len(data)
-
+    shape_type = meta.get('shape_type', ['rectangle'] * len(data))
     # No data passed so nothing written
     if len(data) == 0:
-        return
+        return None
 
     # TODO: we need to change this to the axis names once we get access to them
     # construct table from data
-    n_dimensions = max([s.shape[1] for s in data])
+    n_dimensions = max(s.shape[1] for s in data)
     column_names = ['axis-' + str(n) for n in range(n_dimensions)]
 
     # add shape id and vertex id of each vertex
@@ -255,7 +248,6 @@ def napari_write_shapes(path: str, data: Any, meta: dict) -> Optional[str]:
     return path
 
 
-@napari_hook_implementation(trylast=True)
 def napari_get_writer(
     path: str, layer_types: List[str]
 ) -> Optional[WriterFunction]:
@@ -288,7 +280,7 @@ def write_layer_data_with_plugins(
     path: str,
     layer_data: List[FullLayerData],
     *,
-    plugin_name: Optional[str] = 'builtins',
+    plugin_name: Optional[str] = 'napari',
 ) -> List[str]:
     """Write layer data out into a folder one layer at a time.
 
@@ -326,7 +318,10 @@ def write_layer_data_with_plugins(
     """
     from tempfile import TemporaryDirectory
 
-    from . import plugin_manager
+    import npe2
+
+    if plugin_name == 'builtins':
+        plugin_name = 'napari'
 
     # remember whether it was there to begin with
     already_existed = os.path.exists(path)
@@ -341,19 +336,23 @@ def write_layer_data_with_plugins(
         with TemporaryDirectory(dir=path) as tmp:
             # Loop through data for each layer
             for layer_data_tuple in layer_data:
-                data, meta, layer_type = layer_data_tuple
-                # Get hook caller according to layer type
-                hook_caller = getattr(
-                    plugin_manager.hook, f'napari_write_{layer_type}'
-                )
+                _, meta, type_ = layer_data_tuple
+
                 # Create full path using name of layer
                 full_path = abspath_or_url(os.path.join(tmp, meta['name']))
+                if type_ == 'image':
+                    # workaround for https://github.com/napari/npe2/issues/129
+                    full_path += '.tif'
+
                 # Write out data using first plugin found for this hook spec
                 # or named plugin if provided
-                outpath = hook_caller(
-                    _plugin=plugin_name, path=full_path, data=data, meta=meta
+                out = npe2.write(
+                    path=full_path,
+                    layer_data=[layer_data_tuple],  # type: ignore
+                    plugin_name=plugin_name,
                 )
-                written.append(outpath)
+
+                written.extend(out)
             for fname in os.listdir(tmp):
                 shutil.move(os.path.join(tmp, fname), path)
     except Exception as exc:

@@ -1,11 +1,11 @@
 import dask.array as da
 import numpy as np
 import pytest
-import tensorstore as ts
 import xarray as xr
 
 from napari._tests.utils import check_layer_world_data_extent
 from napari.layers import Image
+from napari.layers.image._image_constants import ImageRendering
 from napari.layers.utils.plane import ClippingPlaneList, SlicingPlane
 from napari.utils import Colormap
 from napari.utils.transforms.transform_utils import rotate_to_matrix
@@ -199,14 +199,13 @@ def test_non_rgb_image():
     assert layer._data_view.shape == shape[-2:]
 
 
-def test_error_non_rgb_image():
+@pytest.mark.parametrize("shape", [(10, 15, 6), (10, 10)])
+def test_error_non_rgb_image(shape):
     """Test error on trying non rgb as rgb."""
     # If rgb is set to be True in constructor but the last dim has a
-    # size > 4 then data cannot actually be rgb
-    shape = (10, 15, 6)
-    np.random.seed(0)
-    data = np.random.random(shape)
-    with pytest.raises(ValueError):
+    # size > 4 or ndim not >= 3 then data cannot actually be rgb
+    data = np.empty(shape)
+    with pytest.raises(ValueError, match="'rgb' was set to True but"):
         Image(data, rgb=True)
 
 
@@ -314,13 +313,20 @@ def test_interpolation():
     np.random.seed(0)
     data = np.random.random((10, 15))
     layer = Image(data)
-    assert layer.interpolation == 'nearest'
+    with pytest.deprecated_call():
+        assert layer.interpolation == 'nearest'
+    assert layer.interpolation2d == 'nearest'
+    assert layer.interpolation3d == 'linear'
 
-    layer = Image(data, interpolation='bicubic')
-    assert layer.interpolation == 'bicubic'
+    layer = Image(data, interpolation2d='bicubic')
+    assert layer.interpolation2d == 'bicubic'
+    with pytest.deprecated_call():
+        assert layer.interpolation == 'bicubic'
 
-    layer.interpolation = 'bilinear'
-    assert layer.interpolation == 'bilinear'
+    layer.interpolation2d = 'bilinear'
+    assert layer.interpolation2d == 'bilinear'
+    with pytest.deprecated_call():
+        assert layer.interpolation == 'bilinear'
 
 
 def test_colormaps():
@@ -655,8 +661,8 @@ def test_grid_translate():
     data = np.random.random((10, 15))
     layer = Image(data)
     translate = np.array([15, 15])
-    layer.translate_grid = translate
-    np.testing.assert_allclose(layer.translate_grid, translate)
+    layer._translate_grid = translate
+    np.testing.assert_allclose(layer._translate_grid, translate)
 
 
 def test_world_data_extent():
@@ -736,7 +742,7 @@ def test_image_state_update():
         setattr(image, k, v)
 
 
-def test_instiantiate_with_experimental_slicing_plane_dict():
+def test_instantiate_with_plane_parameter_dict():
     """Test that an image layer can be instantiated with plane parameters
     in a dictionary.
     """
@@ -745,23 +751,21 @@ def test_instiantiate_with_experimental_slicing_plane_dict():
         'normal': (1, 1, 1),
         'thickness': 22,
     }
-    image = Image(
-        np.ones((32, 32, 32)), experimental_slicing_plane=plane_parameters
-    )
+    image = Image(np.ones((32, 32, 32)), plane=plane_parameters)
     for k, v in plane_parameters.items():
         if k == 'normal':
             v = tuple(v / np.linalg.norm(v))
-        assert v == getattr(image.experimental_slicing_plane, k, v)
+        assert v == getattr(image.plane, k, v)
 
 
-def test_instiantiate_with_experimental_slicing_plane():
+def test_instiantiate_with_plane():
     """Test that an image layer can be instantiated with plane parameters
     in a Plane.
     """
     plane = SlicingPlane(position=(32, 32, 32), normal=(1, 1, 1), thickness=22)
-    image = Image(np.ones((32, 32, 32)), experimental_slicing_plane=plane)
+    image = Image(np.ones((32, 32, 32)), plane=plane)
     for k, v in plane.dict().items():
-        assert v == getattr(image.experimental_slicing_plane, k, v)
+        assert v == getattr(image.plane, k, v)
 
 
 def test_instantiate_with_clipping_planelist():
@@ -788,6 +792,8 @@ def test_instantiate_with_experimental_clipping_planes_dict():
 
 def test_tensorstore_image():
     """Test an image coming from a tensorstore array."""
+    ts = pytest.importorskip('tensorstore')
+
     data = ts.array(
         np.full(shape=(1024, 1024), fill_value=255, dtype=np.uint8)
     )
@@ -825,3 +831,11 @@ def test_projected_distance_from_mouse_drag(
         dims_displayed=[0, 1, 2],
     )
     assert np.allclose(result, expected_value)
+
+
+def test_rendering_init():
+    np.random.seed(0)
+    data = np.random.rand(10, 10, 10)
+    layer = Image(data, rendering='iso')
+
+    assert layer.rendering == ImageRendering.ISO.value

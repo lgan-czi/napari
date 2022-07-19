@@ -1,3 +1,6 @@
+import weakref
+from functools import partial
+
 import pytest
 
 from napari.utils.events import EventEmitter
@@ -19,6 +22,69 @@ def test_event_blocker_count():
         e()
         e()
     assert block.count == 3
+
+
+def test_weakref_event_emitter():
+    """
+    We are testing that an event blocker does not keep hard reference to
+    the object we are blocking, especially if it's a bound method.
+
+    The reason it used to keep references is to get the count of how many time
+    a callback was blocked, but if the object does not exists, then the bound method
+    does not and thus there is no way to ask for it's count.
+
+    so we can keep only weak refs.
+
+    """
+    e = EventEmitter(type='test_weak')
+
+    class Obj:
+        def cb(self):
+            pass
+
+    o = Obj()
+    ref_o = weakref.ref(o)
+
+    e.connect(o.cb)
+
+    #
+    with e.blocker(o.cb):
+        e()
+
+    del o
+    assert ref_o() is None
+
+
+@pytest.mark.parametrize('disconnect_and_should_be_none', [True, False])
+def test_weakref_event_emitter_cb(disconnect_and_should_be_none):
+    """
+
+    Note that as above but with pure callback, We keep a reference to it, the
+    reason is that unlike with bound method, the callback may be a closure and
+    may not stick around.
+
+    We thus expect the wekref to be None only if explicitely disconnected
+
+    """
+    e = EventEmitter(type='test_weak')
+
+    def cb(self):
+        pass
+
+    ref_cb = weakref.ref(cb)
+
+    e.connect(cb)
+
+    with e.blocker(cb):
+        e()
+
+    if disconnect_and_should_be_none:
+        e.disconnect(cb)
+        del cb
+        assert ref_cb() is None
+    else:
+        del cb
+        assert ref_cb() is not None
 
 
 def test_error_on_connect():
@@ -83,6 +149,88 @@ def test_error_on_connect():
     assert t.m4 == 1
 
 
+def test_event_order_func():
+    res_li = []
+
+    def fun1():
+        res_li.append(1)
+
+    def fun2(val):
+        res_li.append(val)
+
+    def fun3():
+        res_li.append(3)
+
+    def fun4():
+        res_li.append(4)
+
+    def fun5(val):
+        res_li.append(val)
+
+    def fun6(val):
+        res_li.append(val)
+
+    fun1.__module__ = "napari.test.sample"
+    fun3.__module__ = "napari.test.sample"
+    fun5.__module__ = "napari.test.sample"
+
+    e = EventEmitter(type="test")
+    e.connect(fun1)
+    e.connect(partial(fun2, val=2))
+    e()
+    assert res_li == [1, 2]
+    res_li = []
+    e.connect(fun3)
+    e()
+    assert res_li == [3, 1, 2]
+    res_li = []
+    e.connect(fun4)
+    e()
+    assert res_li == [3, 1, 4, 2]
+    res_li = []
+    e.connect(partial(fun5, val=5), position="last")
+    e()
+    assert res_li == [3, 1, 5, 4, 2]
+    res_li = []
+    e.connect(partial(fun6, val=6), position="last")
+    e()
+    assert res_li == [3, 1, 5, 4, 2, 6]
+
+
+def test_event_order_methods():
+    res_li = []
+
+    class Test:
+        def fun1(self):
+            res_li.append(1)
+
+        def fun2(self):
+            res_li.append(2)
+
+    class Test2:
+        def fun3(self):
+            res_li.append(3)
+
+        def fun4(self):
+            res_li.append(4)
+
+    Test.__module__ = "napari.test.sample"
+
+    t1 = Test()
+    t2 = Test2()
+
+    e = EventEmitter(type="test")
+    e.connect(t1.fun1)
+    e.connect(t2.fun3)
+    e()
+    assert res_li == [1, 3]
+    res_li = []
+    e.connect(t1.fun2)
+    e.connect(t2.fun4)
+    e()
+    assert res_li == [2, 1, 4, 3]
+
+
 def test_no_event_arg():
     class TestOb:
         def __init__(self):
@@ -121,3 +269,85 @@ def test_to_many_positional():
         e.connect(t.fun)
     with pytest.raises(RuntimeError):
         e.connect(simple_fun)
+
+
+def test_disconnect_object():
+    count_list = []
+
+    def fun1():
+        count_list.append(1)
+
+    class TestOb:
+        call_list_1 = []
+        call_list_2 = []
+
+        def fun1(self):
+            self.call_list_1.append(1)
+
+        def fun2(self):
+            self.call_list_2.append(1)
+
+    t = TestOb()
+
+    e = EventEmitter(type="test")
+    e.connect(t.fun1)
+    e.connect(t.fun2)
+    e.connect(fun1)
+    e()
+
+    assert t.call_list_1 == [1]
+    assert t.call_list_2 == [1]
+    assert count_list == [1]
+
+    e.disconnect(t)
+    e()
+
+    assert t.call_list_1 == [1]
+    assert t.call_list_2 == [1]
+    assert count_list == [1, 1]
+
+
+def test_weakref_disconnect():
+    class TestOb:
+        call_list_1 = []
+
+        def fun1(self):
+            self.call_list_1.append(1)
+
+        def fun2(self, event):
+            self.call_list_1.append(2)
+
+    t = TestOb()
+
+    e = EventEmitter(type="test")
+    e.connect(t.fun1)
+    e()
+
+    assert t.call_list_1 == [1]
+    e.disconnect((weakref.ref(t), "fun1"))
+    e()
+    assert t.call_list_1 == [1]
+    e.connect(t.fun2)
+    e()
+    assert t.call_list_1 == [1, 2]
+
+
+def test_none_disconnect():
+    count_list = []
+
+    def fun1():
+        count_list.append(1)
+
+    def fun2(event):
+        count_list.append(2)
+
+    e = EventEmitter(type="test")
+    e.connect(fun1)
+    e()
+    assert count_list == [1]
+    e.disconnect(None)
+    e()
+    assert count_list == [1]
+    e.connect(fun2)
+    e()
+    assert count_list == [1, 2]

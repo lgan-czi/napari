@@ -1,3 +1,4 @@
+import platform
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -17,7 +18,7 @@ class ViewMenu(NapariMenu):
 
         def _toggle_dict(text, name, prop):
             # helper func to make a Action dict for togglers
-            obj = getattr(window.qt_viewer.viewer, name)
+            obj = getattr(window._qt_viewer.viewer, name)
             return {
                 'text': text,
                 'slot': partial(setattr, obj, prop),
@@ -35,6 +36,7 @@ class ViewMenu(NapariMenu):
                 'shortcut': 'Ctrl+F',
             },
             {
+                'when': platform.system() != "Darwin",
                 'text': trans._('Toggle Menubar Visibility'),
                 'slot': window._toggle_menubar_visible,
                 'shortcut': 'Ctrl+M',
@@ -49,7 +51,7 @@ class ViewMenu(NapariMenu):
             {
                 'when': async_config.async_octree,
                 'text': trans._('Toggle Chunk Outlines'),
-                'slot': window.qt_viewer._toggle_chunk_outlines,
+                'slot': window._qt_viewer._toggle_chunk_outlines,
                 'shortcut': 'Ctrl+Alt+O',
             },
             {

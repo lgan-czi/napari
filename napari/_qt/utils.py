@@ -12,14 +12,13 @@ import numpy as np
 import qtpy
 from qtpy.QtCore import (
     QByteArray,
-    QObject,
+    QPoint,
     QPropertyAnimation,
     QSize,
     QSocketNotifier,
     Qt,
-    Signal,
 )
-from qtpy.QtGui import QColor, QCursor, QDrag, QImage, QPainter, QPixmap
+from qtpy.QtGui import QColor, QCursor, QDrag, QImage, QPainter, QPen, QPixmap
 from qtpy.QtWidgets import (
     QGraphicsColorizeEffect,
     QGraphicsOpacityEffect,
@@ -83,7 +82,7 @@ def str_to_qbytearray(string: str) -> QByteArray:
     return QByteArray.fromBase64(string[len(QBYTE_FLAG) :].encode())
 
 
-def QImg2array(img):
+def QImg2array(img) -> np.ndarray:
     """Convert QImage to an array.
 
     Parameters
@@ -106,7 +105,7 @@ def QImg2array(img):
     # As vispy doesn't use qtpy we need to reconcile the differences
     # between the `QImage` API for `PySide2` and `PyQt5` on how to convert
     # a QImage to a numpy array.
-    if qtpy.API_NAME == 'PySide2':
+    if qtpy.API_NAME.startswith('PySide'):
         arr = np.array(b).reshape(h, w, c)
     else:
         b.setsize(h * w * c)
@@ -121,9 +120,11 @@ def QImg2array(img):
 @contextmanager
 def qt_signals_blocked(obj):
     """Context manager to temporarily block signals from `obj`"""
-    obj.blockSignals(True)
-    yield
-    obj.blockSignals(False)
+    previous = obj.blockSignals(True)
+    try:
+        yield
+    finally:
+        obj.blockSignals(previous)
 
 
 @contextmanager
@@ -155,12 +156,84 @@ def square_pixmap(size):
     """Create a white/black hollow square pixmap. For use as labels cursor."""
     size = max(int(size), 1)
     pixmap = QPixmap(QSize(size, size))
-    pixmap.fill(Qt.transparent)
+    pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
-    painter.setPen(Qt.white)
+    painter.setPen(Qt.GlobalColor.white)
     painter.drawRect(0, 0, size - 1, size - 1)
-    painter.setPen(Qt.black)
+    painter.setPen(Qt.GlobalColor.black)
     painter.drawRect(1, 1, size - 3, size - 3)
+    painter.end()
+    return pixmap
+
+
+@lru_cache(maxsize=64)
+def crosshair_pixmap():
+    """Create a cross cursor with white/black hollow square pixmap in the middle.
+    For use as points cursor."""
+
+    size = 25
+
+    pixmap = QPixmap(QSize(size, size))
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+
+    # Base measures
+    width = 1
+    center = 3  # Must be odd!
+    rect_size = center + 2 * width
+    square = rect_size + width * 4
+
+    pen = QPen(Qt.GlobalColor.white, 1)
+    pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
+    painter.setPen(pen)
+
+    # # Horizontal rectangle
+    painter.drawRect(0, (size - rect_size) // 2, size - 1, rect_size - 1)
+
+    # Vertical rectangle
+    painter.drawRect((size - rect_size) // 2, 0, rect_size - 1, size - 1)
+
+    # Square
+    painter.drawRect(
+        (size - square) // 2, (size - square) // 2, square - 1, square - 1
+    )
+
+    pen = QPen(Qt.GlobalColor.black, 2)
+    pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
+    painter.setPen(pen)
+
+    # # Square
+    painter.drawRect(
+        (size - square) // 2 + 2,
+        (size - square) // 2 + 2,
+        square - 4,
+        square - 4,
+    )
+
+    pen = QPen(Qt.GlobalColor.black, 3)
+    pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
+    painter.setPen(pen)
+
+    # # # Horizontal lines
+    mid_vpoint = QPoint(2, size // 2)
+    painter.drawLine(
+        mid_vpoint, QPoint(((size - center) // 2) - center + 1, size // 2)
+    )
+    mid_vpoint = QPoint(size - 3, size // 2)
+    painter.drawLine(
+        mid_vpoint, QPoint(((size - center) // 2) + center + 1, size // 2)
+    )
+
+    # # # Vertical lines
+    mid_hpoint = QPoint(size // 2, 2)
+    painter.drawLine(
+        QPoint(size // 2, ((size - center) // 2) - center + 1), mid_hpoint
+    )
+    mid_hpoint = QPoint(size // 2, size - 3)
+    painter.drawLine(
+        QPoint(size // 2, ((size - center) // 2) + center + 1), mid_hpoint
+    )
+
     painter.end()
     return pixmap
 
@@ -168,13 +241,13 @@ def square_pixmap(size):
 @lru_cache(maxsize=64)
 def circle_pixmap(size: int):
     """Create a white/black hollow circle pixmap. For use as labels cursor."""
-    size = max(int(size), 1)
+    size = max(size, 1)
     pixmap = QPixmap(QSize(size, size))
-    pixmap.fill(Qt.transparent)
+    pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
-    painter.setPen(Qt.white)
+    painter.setPen(Qt.GlobalColor.white)
     painter.drawEllipse(0, 0, size - 1, size - 1)
-    painter.setPen(Qt.black)
+    painter.setPen(Qt.GlobalColor.black)
     painter.drawEllipse(1, 1, size - 3, size - 3)
     painter.end()
     return pixmap
@@ -211,7 +284,7 @@ def drag_with_pixmap(list_widget: QListWidget) -> QDrag:
     drag.setMimeData(list_widget.mimeData(list_widget.selectedItems()))
     size = list_widget.viewport().visibleRegion().boundingRect().size()
     pixmap = QPixmap(size)
-    pixmap.fill(Qt.transparent)
+    pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     for index in list_widget.selectedIndexes():
         rect = list_widget.visualRect(index)
@@ -312,14 +385,18 @@ def remove_flash_animation(widget_ref: weakref.ref[QWidget]):
 
     Parameters
     ----------
-    widget : QWidget
+    widget_ref : QWidget
         Any Qt widget.
     """
     if widget_ref() is None:
         return
     widget = widget_ref()
-    widget.setGraphicsEffect(None)
-    del widget._flash_animation
+    try:
+        widget.setGraphicsEffect(None)
+        del widget._flash_animation
+    except RuntimeError:
+        # RuntimeError: wrapped C/C++ object of type QtWidgetOverlay deleted
+        pass
 
 
 @contextmanager
@@ -349,44 +426,34 @@ def _maybe_allow_interrupt(qapp):
     """
     old_sigint_handler = signal.getsignal(signal.SIGINT)
     handler_args = None
-    skip = False
     if old_sigint_handler in (None, signal.SIG_IGN, signal.SIG_DFL):
-        skip = True
-    else:
-        wsock, rsock = socket.socketpair()
-        wsock.setblocking(False)
-        old_wakeup_fd = signal.set_wakeup_fd(wsock.fileno())
-        sn = QSocketNotifier(rsock.fileno(), QSocketNotifier.Type.Read)
+        yield
+        return
 
-        # Clear the socket to re-arm the notifier.
-        sn.activated.connect(lambda *args: rsock.recv(1))
+    wsock, rsock = socket.socketpair()
+    wsock.setblocking(False)
+    old_wakeup_fd = signal.set_wakeup_fd(wsock.fileno())
+    sn = QSocketNotifier(rsock.fileno(), QSocketNotifier.Type.Read)
 
-        def handle(*args):
-            nonlocal handler_args
-            handler_args = args
-            qapp.exit()
+    # Clear the socket to re-arm the notifier.
+    sn.activated.connect(lambda *args: rsock.recv(1))
 
-        signal.signal(signal.SIGINT, handle)
+    def handle(*args):
+        nonlocal handler_args
+        handler_args = args
+        qapp.exit()
+
+    signal.signal(signal.SIGINT, handle)
     try:
         yield
     finally:
-        if not skip:
-            wsock.close()
-            rsock.close()
-            sn.setEnabled(False)
-            signal.set_wakeup_fd(old_wakeup_fd)
-            signal.signal(signal.SIGINT, old_sigint_handler)
-            if handler_args is not None:
-                old_sigint_handler(*handler_args)
-
-
-class Sentry(QObject):
-    """Small object to trigger events across threads."""
-
-    alerted = Signal()
-
-    def alert(self, *_):
-        self.alerted.emit()
+        wsock.close()
+        rsock.close()
+        sn.setEnabled(False)
+        signal.set_wakeup_fd(old_wakeup_fd)
+        signal.signal(signal.SIGINT, old_sigint_handler)
+        if handler_args is not None:
+            old_sigint_handler(*handler_args)
 
 
 def qt_might_be_rich_text(text) -> bool:

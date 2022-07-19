@@ -1,4 +1,6 @@
 import numpy as np
+import pytest
+import skimage
 from skimage.transform import pyramid_gaussian
 
 from napari._tests.utils import check_layer_world_data_extent
@@ -38,7 +40,7 @@ def test_infer_tuple_multiscale():
     """Test instantiating Image layer with random 2D multiscale data."""
     shapes = [(40, 20), (20, 10), (10, 5)]
     np.random.seed(0)
-    data = tuple(np.random.random(s) for s in shapes)
+    data = [np.random.random(s) for s in shapes]
     layer = Image(data)
     assert layer.data == data
     assert layer.multiscale is True
@@ -67,7 +69,13 @@ def test_multiscale_tuple():
     shape = (40, 20)
     np.random.seed(0)
     img = np.random.random(shape)
-    data = tuple(pyramid_gaussian(img, multichannel=False))
+
+    if skimage.__version__ > '0.19':
+        pyramid_kwargs = {'channel_axis': None}
+    else:
+        pyramid_kwargs = {'multichannel': False}
+
+    data = list(pyramid_gaussian(img, **pyramid_kwargs))
     layer = Image(data)
     assert layer.data == data
     assert layer.multiscale is True
@@ -216,13 +224,20 @@ def test_interpolation():
     np.random.seed(0)
     data = [np.random.random(s) for s in shapes]
     layer = Image(data, multiscale=True)
-    assert layer.interpolation == 'nearest'
+    with pytest.deprecated_call():
+        assert layer.interpolation == 'nearest'
+    assert layer.interpolation2d == 'nearest'
+    assert layer.interpolation3d == 'linear'
 
-    layer = Image(data, multiscale=True, interpolation='bicubic')
-    assert layer.interpolation == 'bicubic'
+    layer = Image(data, multiscale=True, interpolation2d='bicubic')
+    assert layer.interpolation2d == 'bicubic'
+    with pytest.deprecated_call():
+        assert layer.interpolation == 'bicubic'
 
-    layer.interpolation = 'bilinear'
-    assert layer.interpolation == 'bilinear'
+    layer.interpolation2d = 'bilinear'
+    with pytest.deprecated_call():
+        assert layer.interpolation == 'bilinear'
+    assert layer.interpolation2d == 'bilinear'
 
 
 def test_colormaps():
@@ -400,3 +415,20 @@ def test_5D_multiscale():
     assert layer.data == data
     assert layer.multiscale is True
     assert layer.ndim == len(shapes[0])
+
+
+def test_multiscale_data_protocol():
+    """Test multiscale data provides basic data protocol."""
+    shapes = [(2, 5, 20, 20), (2, 5, 10, 10), (2, 5, 5, 5)]
+    np.random.seed(0)
+    data = [np.random.random(s) for s in shapes]
+    layer = Image(data, multiscale=True)
+    assert '3 levels' in repr(layer.data)
+    assert layer.data == data
+    assert layer.data_raw is data
+    assert layer.data is not data
+    assert layer.multiscale is True
+
+    assert layer.data.dtype == float
+    assert layer.data.shape == shapes[0]
+    assert isinstance(layer.data[0], np.ndarray)

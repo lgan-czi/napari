@@ -36,8 +36,10 @@ class ActivityToggleItem(QWidget):
 
         self._activityBtn = QToolButton()
         self._activityBtn.setObjectName("QtActivityButton")
-        self._activityBtn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        self._activityBtn.setArrowType(Qt.UpArrow)
+        self._activityBtn.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        )
+        self._activityBtn.setArrowType(Qt.ArrowType.UpArrow)
         self._activityBtn.setIconSize(QSize(11, 11))
         self._activityBtn.setText(trans._('activity'))
         self._activityBtn.setCheckable(True)
@@ -72,7 +74,9 @@ class QtActivityDialog(QDialog):
         self.setMinimumHeight(self.MIN_HEIGHT)
         self.setMaximumHeight(self.MIN_HEIGHT)
         self.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Fixed)
-        self.setWindowFlags(Qt.SubWindow | Qt.WindowStaysOnTopHint)
+        self.setWindowFlags(
+            Qt.WindowType.SubWindow | Qt.WindowType.WindowStaysOnTopHint
+        )
         self.setModal(False)
 
         opacityEffect = QGraphicsOpacityEffect(self)
@@ -153,6 +157,7 @@ class QtActivityDialog(QDialog):
         prog.events.description.connect(pbar._set_description)
         prog.events.overflow.connect(pbar._make_indeterminate)
         prog.events.eta.connect(pbar._set_eta)
+        prog.events.total.connect(pbar._set_total)
 
         # connect pbar close method if we're closed
         self.destroyed.connect(prog.close)
@@ -222,8 +227,7 @@ class QtActivityDialog(QDialog):
         QtLabeledProgressBar
             QtLabeledProgressBar widget associated with this progress object
         """
-        pbars = self._baseWidget.findChildren(QtLabeledProgressBar)
-        if pbars:
+        if pbars := self._baseWidget.findChildren(QtLabeledProgressBar):
             for potential_parent in pbars:
                 if potential_parent.progress is prog:
                     return potential_parent
@@ -237,6 +241,8 @@ class QtActivityDialog(QDialog):
             progress object whose QtLabeledProgressBar to close
         """
         current_pbar = self.get_pbar_from_prog(prog)
+        if not current_pbar:
+            return
         parent_widget = current_pbar.parent()
         current_pbar.close()
         current_pbar.deleteLater()
@@ -262,9 +268,9 @@ class QtActivityDialog(QDialog):
         pbars = self._baseWidget.findChildren(QtLabeledProgressBar)
         pbar_groups = self._baseWidget.findChildren(QtProgressBarGroup)
 
-        progress_visible = any([pbar.isVisible() for pbar in pbars])
+        progress_visible = any(pbar.isVisible() for pbar in pbars)
         progress_group_visible = any(
-            [pbar_group.isVisible() for pbar_group in pbar_groups]
+            pbar_group.isVisible() for pbar_group in pbar_groups
         )
         if not progress_visible and not progress_group_visible:
             self._toggleButton._inProgressIndicator.movie().stop()
@@ -281,8 +287,7 @@ def remove_separators(current_pbars):
         parent and new progress bar to remove separators from
     """
     for current_pbar in current_pbars:
-        line_widg = current_pbar.findChild(QFrame, "QtCustomTitleBarLine")
-        if line_widg:
+        if line_widg := current_pbar.findChild(QFrame, "QtCustomTitleBarLine"):
             current_pbar.layout().removeWidget(line_widg)
             line_widg.hide()
             line_widg.deleteLater()

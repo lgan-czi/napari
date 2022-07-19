@@ -1,31 +1,38 @@
+import sys
 import os
+
+import pytest
+
+# check if this module has been explicitly requested or `--test-examples` is included
+fpath = os.path.join(*__file__.split(os.path.sep)[-3:])
+if '--test-examples' not in sys.argv and fpath not in sys.argv:
+    pytest.skip(
+        'Use `--test-examples` to test examples', allow_module_level=True
+    )
+
 import runpy
 from pathlib import Path
 
-import pytest
+import numpy as np
+import skimage.data
 from qtpy import API_NAME
 
 import napari
+from napari._qt.qt_main_window import Window
 from napari.utils.notifications import notification_manager
-
-from napari._tests.utils import slow
 
 # not testing these examples
 skip = [
-    'surface_timeseries.py',  # needs nilearn
-    '3d_kymograph.py',  # needs tqdm
-    'live_tiffs.py',  # requires files
-    'tiled-rendering-2d.py',  # too slow
-    'live_tiffs_generator.py',
+    'surface_timeseries_.py',  # needs nilearn
+    '3d_kymograph_.py',  # needs tqdm
+    'live_tiffs_.py',  # requires files
+    'tiled-rendering-2d_.py',  # too slow
+    'live_tiffs_generator_.py',
     'points-over-time.py',  # too resource hungry
-    'embed_ipython.py',  # fails without monkeypatch
-    'custom_key_bindings.py',  # breaks EXPECTED_NUMBER_OF_VIEWER_METHODS later
+    'embed_ipython_.py',  # fails without monkeypatch
     'new_theme.py',  # testing theme is extremely slow on CI
+    'dynamic-projections-dask.py',  # extremely slow / does not finish
 ]
-
-
-if os.environ.get('MIN_REQ', '') == '1':
-    skip.extend(['spheres.py', 'clipping_planes_interactive.py'])
 
 EXAMPLE_DIR = Path(napari.__file__).parent.parent / 'examples'
 # using f.name here and re-joining at `run_path()` for test key presentation
@@ -36,40 +43,26 @@ examples = [f.name for f in EXAMPLE_DIR.glob("*.py") if f.name not in skip]
 if os.getenv("CI") and os.name == 'nt' and API_NAME == 'PyQt5':
     examples = []
 
-if os.getenv("CI") and os.name == 'nt':
-    if 'to_screenshot.py' in examples:
-        examples.remove('to_screenshot.py')
+if os.getenv("CI") and os.name == 'nt' and 'to_screenshot.py' in examples:
+    examples.remove('to_screenshot.py')
 
 
-@pytest.fixture
-def qapp():
-    from qtpy.QtCore import QTimer
-
-    from napari._qt.qt_event_loop import get_app
-
-    # it's important that we use get_app so that it connects to the
-    # app.aboutToQuit.connect(wait_for_workers_to_quit)
-    app = get_app()
-
-    # quit examples that explicitly start the event loop with `napari.run()`
-    # so that tests aren't waiting on a manual exit
-    QTimer.singleShot(100, app.quit)
-
-    yield app
-
-
-@slow(30)
 @pytest.mark.filterwarnings("ignore")
 @pytest.mark.skipif(not examples, reason="No examples were found.")
 @pytest.mark.parametrize("fname", examples)
-def test_examples(qapp, fname, monkeypatch, capsys):
+def test_examples(builtins, fname, monkeypatch):
     """Test that all of our examples are still working without warnings."""
-
-    from napari._qt.qt_main_window import Window
-    from napari import Viewer
 
     # hide viewer window
     monkeypatch.setattr(Window, 'show', lambda *a: None)
+    # prevent running the event loop
+    monkeypatch.setattr(napari, 'run', lambda *a, **k: None)
+    # Prevent downloading example data because this sometimes fails.
+    monkeypatch.setattr(
+        skimage.data,
+        'cells3d',
+        lambda: np.zeros((60, 2, 256, 256), dtype=np.uint16),
+    )
 
     # make sure our sys.excepthook override doesn't hide errors
     def raise_errors(etype, value, tb):
@@ -85,4 +78,4 @@ def test_examples(qapp, fname, monkeypatch, capsys):
         if e.code != 0:
             raise
     finally:
-        Viewer.close_all()
+        napari.Viewer.close_all()

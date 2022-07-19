@@ -36,11 +36,15 @@ from typing import (
     Mapping,
     Optional,
     Sequence,
+    SupportsIndex,
+    Tuple,
     Type,
     TypeVar,
     Union,
     overload,
 )
+
+from ..translations import trans
 
 ConstType = Union[None, str, bytes, bool, int, float]
 PassedType = TypeVar(
@@ -83,7 +87,12 @@ def parse_expression(expr: str) -> Expr:
         return ExprTranformer().visit(tree.body)
     except SyntaxError as e:
         raise SyntaxError(
-            f"{expr!r} is not a valid expression: ({e})."
+            trans._(
+                "{expr} is not a valid expression: ({error}).",
+                deferred=True,
+                expr=f"{expr!r}",
+                error=e,
+            )
         ) from None
 
 
@@ -164,7 +173,11 @@ class Expr(ast.AST, Generic[T]):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         if type(self).__name__ == 'Expr':
-            raise RuntimeError("Don't instantiate Expr.  Use `Expr.parse`")
+            raise RuntimeError(
+                trans._(
+                    "Don't instantiate Expr. Use `Expr.parse`", deferred=True
+                )
+            )
         super().__init__(*args, **kwargs)
         ast.fix_missing_locations(self)
 
@@ -176,7 +189,11 @@ class Expr(ast.AST, Generic[T]):
         except NameError:
             miss = {k for k in _iter_names(self) if k not in context}
             raise NameError(
-                f'Names required to eval this expression are missing: {miss}'
+                trans._(
+                    'Names required to eval this expression are missing: {miss}',
+                    deferred=True,
+                    miss=miss,
+                )
             )
 
     @classmethod
@@ -300,6 +317,11 @@ class Expr(ast.AST, Generic[T]):
         # note: we're using the invert operator `~` to mean "not ___"
         return UnaryOp(ast.Not(), self)
 
+    def __reduce_ex__(self, protocol: SupportsIndex) -> Tuple[Any, ...]:
+        rv = list(super().__reduce_ex__(protocol))
+        rv[1] = tuple(getattr(self, f) for f in self._fields)
+        return tuple(rv)
+
 
 class Name(Expr[T], ast.Name):
     """A variable name.
@@ -307,7 +329,9 @@ class Name(Expr[T], ast.Name):
     `id` holds the name as a string.
     """
 
-    def __init__(self, id: str, **kwargs: Any) -> None:
+    def __init__(
+        self, id: str, ctx: ast.expr_context = ast.Load(), **kwargs: Any
+    ) -> None:
         kwargs['ctx'] = ast.Load()
         super().__init__(id, **kwargs)
 
@@ -324,11 +348,19 @@ class Constant(Expr[V], ast.Constant):
 
     value: V
 
-    def __init__(self, value: V, **kwargs: Any) -> None:
+    def __init__(
+        self, value: V, kind: Optional[str] = None, **kwargs: Any
+    ) -> None:
         _valid_type = (type(None), str, bytes, bool, int, float)
         if not isinstance(value, _valid_type):
-            raise TypeError(f"Constants must be type: {_valid_type!r}")
-        super().__init__(value, **kwargs)
+            raise TypeError(
+                trans._(
+                    "Constants must be type: {_valid_type!r}",
+                    deferred=True,
+                    _valid_type=_valid_type,
+                )
+            )
+        super().__init__(value, kind, **kwargs)
 
 
 class Compare(Expr[bool], ast.Compare):
@@ -453,10 +485,11 @@ class ExprTranformer(ast.NodeTransformer):
         type_ = type(node).__name__
 
         if type_ not in ExprTranformer._SUPPORTED_NODES:
-            if sys.version_info < (3, 8) and type_ in self._PY37_CONSTS:
-                val = getattr(node, self._PY37_CONSTS[type_])
-                return Constant(val, lineno=1, col_offset=0)
-            raise SyntaxError(f"Type {type_!r} not supported")
+            raise SyntaxError(
+                trans._(
+                    "Type {type_!r} not supported", deferred=True, type_=type_
+                )
+            )
 
         # providing fake lineno and col_offset here rather than using
         # ast.fill_missing_locations for typing purposes
@@ -470,14 +503,6 @@ class ExprTranformer(ast.NodeTransformer):
             else:
                 kwargs[name] = field
         return globals()[type_](**kwargs)
-
-    # can drop after py3.7 support is gone
-    _PY37_CONSTS = {
-        'Num': 'n',
-        'Str': 's',
-        'Bytes': 's',
-        'NameConstant': 'value',
-    }
 
 
 class ExprSerializer(ast.NodeVisitor):
