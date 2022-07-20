@@ -5,18 +5,33 @@ from vispy.color import Colormap as VispyColormap
 from vispy.scene.node import Node
 
 from ...utils.translations import trans
-from ..utils.gl import fix_data_dtype
+from ..utils.gl import fix_data_dtype, get_gl_extensions
 from ..visuals.image import Image as ImageNode
 from ..visuals.volume import Volume as VolumeNode
 from .base import VispyBaseLayer
 
 
 class ImageLayerNode:
-    def __init__(self, custom_node: Node = None):
+    def __init__(self, custom_node: Node = None, texture_format=None):
+        if (
+            texture_format == 'auto'
+            and 'texture_float' not in get_gl_extensions()
+        ):
+            # if the GPU doesn't support float textures, texture_format auto
+            # WILL fail on float dtypes
+            # https://github.com/napari/napari/issues/3988
+            texture_format = None
+
         self._custom_node = custom_node
-        self._image_node = ImageNode(None, method='auto')
+        self._image_node = ImageNode(
+            None,
+            method='auto',
+            texture_format=texture_format,
+        )
         self._volume_node = VolumeNode(
-            np.zeros((1, 1, 1), dtype=np.float32), clim=[0, 1]
+            np.zeros((1, 1, 1), dtype=np.float32),
+            clim=[0, 1],
+            texture_format=texture_format,
         )
 
     def get_node(self, ndisplay: int) -> Node:
@@ -32,10 +47,10 @@ class ImageLayerNode:
 
 
 class VispyImageLayer(VispyBaseLayer):
-    def __init__(self, layer, node=None):
+    def __init__(self, layer, node=None, texture_format='auto'):
 
         # Use custom node from caller, or our standard image/volume nodes.
-        self._layer_node = ImageLayerNode(node)
+        self._layer_node = ImageLayerNode(node, texture_format=texture_format)
 
         # Default to 2D (image) node.
         super().__init__(layer, self._layer_node.get_node(2))
@@ -43,7 +58,13 @@ class VispyImageLayer(VispyBaseLayer):
         self._array_like = True
 
         self.layer.events.rendering.connect(self._on_rendering_change)
-        self.layer.events.interpolation.connect(self._on_interpolation_change)
+        self.layer.events.depiction.connect(self._on_depiction_change)
+        self.layer.events.interpolation2d.connect(
+            self._on_interpolation_change
+        )
+        self.layer.events.interpolation3d.connect(
+            self._on_interpolation_change
+        )
         self.layer.events.colormap.connect(self._on_colormap_change)
         self.layer.events.contrast_limits.connect(
             self._on_contrast_limits_change
@@ -51,31 +72,29 @@ class VispyImageLayer(VispyBaseLayer):
         self.layer.events.gamma.connect(self._on_gamma_change)
         self.layer.events.iso_threshold.connect(self._on_iso_threshold_change)
         self.layer.events.attenuation.connect(self._on_attenuation_change)
-        self.layer.experimental_slicing_plane.events.enabled.connect(
-            self._on_experimental_slicing_plane_enabled_change
+        self.layer.plane.events.position.connect(
+            self._on_plane_position_change
         )
-        self.layer.experimental_slicing_plane.events.position.connect(
-            self._on_experimental_slicing_plane_position_change
+        self.layer.plane.events.thickness.connect(
+            self._on_plane_thickness_change
         )
-        self.layer.experimental_slicing_plane.events.thickness.connect(
-            self._on_experimental_slicing_plane_thickness_change
-        )
-        self.layer.experimental_slicing_plane.events.normal.connect(
-            self._on_experimental_slicing_plane_normal_change
-        )
+        self.layer.plane.events.normal.connect(self._on_plane_normal_change)
 
+        # display_change is special (like data_change) because it requires a self.reset()
+        # this means that we have to call it manually. Also, it must be called before reset
+        # in order to set the appropriate node first
+        self._on_display_change()
         self.reset()
         self._on_data_change()
 
     def _on_display_change(self, data=None):
-
         parent = self.node.parent
         self.node.parent = None
 
         self.node = self._layer_node.get_node(self.layer._ndisplay)
 
         if data is None:
-            data = np.zeros((1,) * self.layer._ndisplay)
+            data = np.zeros((1,) * self.layer._ndisplay, dtype=np.float32)
 
         if self.layer._empty:
             self.node.visible = False
@@ -131,7 +150,11 @@ class VispyImageLayer(VispyBaseLayer):
         node.update()
 
     def _on_interpolation_change(self):
-        self.node.interpolation = self.layer.interpolation
+        self.node.interpolation = (
+            self.layer.interpolation2d
+            if self.layer._ndisplay == 2
+            else self.layer.interpolation3d
+        )
 
     def _on_rendering_change(self):
         if isinstance(self.node, VolumeNode):
@@ -139,11 +162,18 @@ class VispyImageLayer(VispyBaseLayer):
             self._on_attenuation_change()
             self._on_iso_threshold_change()
 
+    def _on_depiction_change(self):
+        if isinstance(self.node, VolumeNode):
+            self.node.raycasting_mode = str(self.layer.depiction)
+
     def _on_colormap_change(self):
         self.node.cmap = VispyColormap(*self.layer.colormap)
 
     def _on_contrast_limits_change(self):
         self.node.clim = self.layer.contrast_limits
+        if isinstance(self.node, VolumeNode):
+            self.node.mip_cutoff = self.node._texture.clim_normalized[0]
+            self.node.minip_cutoff = self.node._texture.clim_normalized[1]
 
     def _on_gamma_change(self):
         if len(self.node.shared_program.frag._set_items) > 0:
@@ -157,31 +187,17 @@ class VispyImageLayer(VispyBaseLayer):
         if isinstance(self.node, VolumeNode):
             self.node.attenuation = self.layer.attenuation
 
-    def _on_experimental_slicing_plane_enabled_change(self):
+    def _on_plane_thickness_change(self):
         if isinstance(self.node, VolumeNode):
-            if self.layer.experimental_slicing_plane.enabled is True:
-                raycasting_mode = 'plane'
-            else:
-                raycasting_mode = 'volume'
-            self.node.raycasting_mode = raycasting_mode
+            self.node.plane_thickness = self.layer.plane.thickness
 
-    def _on_experimental_slicing_plane_thickness_change(self):
+    def _on_plane_position_change(self):
         if isinstance(self.node, VolumeNode):
-            self.node.plane_thickness = (
-                self.layer.experimental_slicing_plane.thickness
-            )
+            self.node.plane_position = self.layer.plane.position
 
-    def _on_experimental_slicing_plane_position_change(self):
+    def _on_plane_normal_change(self):
         if isinstance(self.node, VolumeNode):
-            self.node.plane_position = (
-                self.layer.experimental_slicing_plane.position
-            )
-
-    def _on_experimental_slicing_plane_normal_change(self):
-        if isinstance(self.node, VolumeNode):
-            self.node.plane_normal = (
-                self.layer.experimental_slicing_plane.normal
-            )
+            self.node.plane_normal = self.layer.plane.normal
 
     def reset(self, event=None):
         super().reset()
@@ -190,10 +206,10 @@ class VispyImageLayer(VispyBaseLayer):
         self._on_contrast_limits_change()
         self._on_gamma_change()
         self._on_rendering_change()
-        self._on_experimental_slicing_plane_enabled_change()
-        self._on_experimental_slicing_plane_position_change()
-        self._on_experimental_slicing_plane_normal_change()
-        self._on_experimental_slicing_plane_thickness_change()
+        self._on_depiction_change()
+        self._on_plane_position_change()
+        self._on_plane_normal_change()
+        self._on_plane_thickness_change()
 
     def downsample_texture(self, data, MAX_TEXTURE_SIZE):
         """Downsample data based on maximum allowed texture size.

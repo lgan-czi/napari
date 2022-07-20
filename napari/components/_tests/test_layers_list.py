@@ -1,5 +1,6 @@
 import os
 
+import npe2
 import numpy as np
 import pytest
 
@@ -24,9 +25,6 @@ def test_initialize_from_list():
 
 
 def test_adding_layer():
-    """
-    Test adding a Layer
-    """
     layers = LayerList()
     layer = Image(np.random.random((10, 10)))
     layers.append(layer)
@@ -39,9 +37,6 @@ def test_adding_layer():
 
 
 def test_removing_layer():
-    """
-    Test removing a Layer
-    """
     layers = LayerList()
     layer = Image(np.random.random((10, 10)))
     layers.append(layer)
@@ -126,8 +121,9 @@ def test_clearing_layerlist():
     """Test clearing layer list."""
     layers = LayerList()
     layer = Image(np.random.random((10, 10)))
+    layer2 = Image(np.random.random((10, 10)))
     layers.append(layer)
-    layers.append(layer)
+    layers.append(layer2)
     assert len(layers) == 2
 
     layers.clear()
@@ -156,6 +152,7 @@ def test_remove_selected():
     assert len(layers) == 0
 
 
+@pytest.mark.filterwarnings('ignore::FutureWarning')
 def test_move_selected():
     """
     Test removing selected layers
@@ -327,7 +324,8 @@ def test_toggle_visibility():
 
 
 # the layer_data_and_types fixture is defined in napari/conftest.py
-def test_layers_save(tmpdir, layer_data_and_types):
+@pytest.mark.filterwarnings('ignore:distutils Version classes are deprecated')
+def test_layers_save(builtins, tmpdir, layer_data_and_types):
     """Test saving all layer data."""
     list_of_layers, _, _, filenames = layer_data_and_types
     layers = LayerList(list_of_layers)
@@ -338,7 +336,7 @@ def test_layers_save(tmpdir, layer_data_and_types):
     assert not os.path.isdir(path)
 
     # Write data
-    layers.save(path, plugin='builtins')
+    layers.save(path, plugin=builtins.name)
 
     # Check folder now exists
     assert os.path.isdir(path)
@@ -353,7 +351,7 @@ def test_layers_save(tmpdir, layer_data_and_types):
 
 
 # the layer_data_and_types fixture is defined in napari/conftest.py
-def test_layers_save_none_selected(tmpdir, layer_data_and_types):
+def test_layers_save_none_selected(builtins, tmpdir, layer_data_and_types):
     """Test saving all layer data."""
     list_of_layers, _, _, filenames = layer_data_and_types
     layers = LayerList(list_of_layers)
@@ -366,7 +364,7 @@ def test_layers_save_none_selected(tmpdir, layer_data_and_types):
 
     # Write data (will get a warning that nothing is selected)
     with pytest.warns(UserWarning):
-        layers.save(path, selected=True, plugin='builtins')
+        layers.save(path, selected=True, plugin=builtins.name)
 
     # Check folder still does not exist
     assert not os.path.isdir(path)
@@ -380,7 +378,7 @@ def test_layers_save_none_selected(tmpdir, layer_data_and_types):
 
 
 # the layer_data_and_types fixture is defined in napari/conftest.py
-def test_layers_save_selected(tmpdir, layer_data_and_types):
+def test_layers_save_selected(builtins, tmpdir, layer_data_and_types):
     """Test saving all layer data."""
     list_of_layers, _, _, filenames = layer_data_and_types
     layers = LayerList(list_of_layers)
@@ -393,7 +391,7 @@ def test_layers_save_selected(tmpdir, layer_data_and_types):
     assert not os.path.isdir(path)
 
     # Write data
-    layers.save(path, selected=True, plugin='builtins')
+    layers.save(path, selected=True, plugin=builtins.name)
 
     # Check folder exists
     assert os.path.isdir(path)
@@ -410,15 +408,19 @@ def test_layers_save_selected(tmpdir, layer_data_and_types):
 
 
 # the layers fixture is defined in napari/conftest.py
-def test_layers_save_svg(tmpdir, layers):
+@pytest.mark.filterwarnings('ignore:`np.int` is a deprecated alias for')
+def test_layers_save_svg(tmpdir, layers, napari_svg_name):
     """Test saving all layer data to an svg."""
+    pm = npe2.PluginManager.instance()
+    pm.register(npe2.PluginManifest.from_distribution('napari-svg'))
+
     path = os.path.join(tmpdir, 'layers_file.svg')
 
     # Check file does not exist
     assert not os.path.isfile(path)
 
     # Write data
-    layers.save(path, plugin='svg')
+    layers.save(path, plugin=napari_svg_name)
 
     # Check file now exists
     assert os.path.isfile(path)
@@ -524,3 +526,36 @@ def test_name_uniqueness():
     layers.append(Image(np.random.random((10, 15)), name="Image"))
     layers.append(Image(np.random.random((10, 15)), name="Image"))
     assert [x.name for x in layers] == ['Image [1]', 'Image', 'Image [2]']
+
+
+def test_readd_layers():
+    layers = LayerList()
+    imgs = []
+    for i in range(5):
+        img = Image(np.random.rand(10, 10, 10))
+        layers.append(img)
+        imgs.append(img)
+
+    assert layers == imgs
+
+    with pytest.raises(ValueError):
+        layers.append(imgs[1])
+    assert layers == imgs
+
+    layers[1] = layers[1]
+    assert layers == imgs
+
+    with pytest.raises(ValueError):
+        layers[1] = layers[2]
+    assert layers == imgs
+
+    layers[:3] = layers[:3]
+    assert layers == imgs
+
+    # invert a section
+    layers[:3] = layers[2::-1]
+    assert set(layers) == set(imgs)
+
+    with pytest.raises(ValueError):
+        layers[:3] = layers[:]
+    assert set(layers) == set(imgs)

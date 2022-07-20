@@ -1,7 +1,8 @@
 import itertools
 import warnings
 from collections import namedtuple
-from typing import Iterable, List, Optional, Tuple, Union
+from functools import cached_property
+from typing import TYPE_CHECKING, Iterable, List, Optional, Tuple, Union
 
 import numpy as np
 
@@ -15,6 +16,9 @@ from ..utils.translations import trans
 
 Extent = namedtuple('Extent', 'data world step')
 
+if TYPE_CHECKING:
+    from npe2.manifest.io import WriterContribution
+
 
 class LayerList(SelectableEventedList[Layer]):
     """List-like layer collection with built-in reordering and callback hooks.
@@ -23,6 +27,35 @@ class LayerList(SelectableEventedList[Layer]):
     ----------
     data : iterable
         Iterable of napari.layer.Layer
+
+    Events
+    ------
+    inserting : (index: int)
+        emitted before an item is inserted at ``index``
+    inserted : (index: int, value: T)
+        emitted after ``value`` is inserted at ``index``
+    removing : (index: int)
+        emitted before an item is removed at ``index``
+    removed : (index: int, value: T)
+        emitted after ``value`` is removed at ``index``
+    moving : (index: int, new_index: int)
+        emitted before an item is moved from ``index`` to ``new_index``
+    moved : (index: int, new_index: int, value: T)
+        emitted after ``value`` is moved from ``index`` to ``new_index``
+    changed : (index: int, old_value: T, value: T)
+        emitted when ``index`` is set from ``old_value`` to ``value``
+    changed <OVERLOAD> : (index: slice, old_value: List[_T], value: List[_T])
+        emitted when ``index`` is set from ``old_value`` to ``value``
+    reordered : (value: self)
+        emitted when the list is reordered (eg. moved/reversed).
+    selection.events.changed : (added: Set[_T], removed: Set[_T])
+        emitted when the set changes, includes item(s) that have been added
+        and/or removed from the set.
+    selection.events.active : (value: _T)
+        emitted when the current item has changed.
+    selection.events._current : (value: _T)
+        emitted when the current item has changed. (Private event)
+
     """
 
     def __init__(self, data=()):
@@ -51,6 +84,19 @@ class LayerList(SelectableEventedList[Layer]):
         for layer in event.removed:
             layer._on_selection(False)
 
+    def _process_delete_item(self, item: Layer):
+        item.events.set_data.disconnect(self._clean_cache)
+        self._clean_cache()
+
+    def _clean_cache(self):
+        cached_properties = (
+            'extent',
+            '_extent_world',
+            '_step_size',
+            '_ranges',
+        )
+        [self.__dict__.pop(p, None) for p in cached_properties]
+
     def __newlike__(self, data):
         return LayerList(data)
 
@@ -70,7 +116,7 @@ class LayerList(SelectableEventedList[Layer]):
             Coerced, unique name.
         """
         existing_layers = {x.name for x in self if x is not layer}
-        for i in range(len(self)):
+        for _ in range(len(self)):
             if name in existing_layers:
                 name = inc_name_count(name)
         return name
@@ -80,43 +126,43 @@ class LayerList(SelectableEventedList[Layer]):
         layer = event.source
         layer.name = self._coerce_name(layer.name, layer)
 
+    def _ensure_unique(self, values, allow=()):
+        bad = set(self._list) - set(allow)
+        values = tuple(values) if isinstance(values, Iterable) else (values,)
+        for v in values:
+            if v in bad:
+                raise ValueError(
+                    trans._(
+                        "Layer '{v}' is already present in layer list",
+                        deferred=True,
+                        v=v,
+                    )
+                )
+        return values
+
+    def __setitem__(self, key, value):
+        old = self._list[key]
+        if isinstance(key, slice):
+            value = self._ensure_unique(value, old)
+        elif isinstance(key, int):
+            (value,) = self._ensure_unique((value,), (old,))
+        super().__setitem__(key, value)
+
     def insert(self, index: int, value: Layer):
         """Insert ``value`` before index."""
+        (value,) = self._ensure_unique((value,))
         new_layer = self._type_check(value)
         new_layer.name = self._coerce_name(new_layer.name)
+        self._clean_cache()
+        new_layer.events.set_data.connect(self._clean_cache)
         super().insert(index, new_layer)
-
-    def move_selected(self, index, insert):
-        """Reorder list by moving the item at index and inserting it
-        at the insert index. If additional items are selected these will
-        get inserted at the insert index too. This allows for rearranging
-        the list based on dragging and dropping a selection of items, where
-        index is the index of the primary item being dragged, and insert is
-        the index of the drop location, and the selection indicates if
-        multiple items are being dragged. If the moved layer is not selected
-        select it.
-
-        Parameters
-        ----------
-        index : int
-            Index of primary item to be moved
-        insert : int
-            Index that item(s) will be inserted at
-        """
-        if self[index] not in self.selection:
-            self.selection.select_only(self[index])
-            moving = [index]
-        else:
-            moving = [i for i, x in enumerate(self) if x in self.selection]
-        offset = insert >= index
-        self.move_multiple(moving, insert + offset)
 
     def toggle_selected_visibility(self):
         """Toggle visibility of selected layers"""
         for layer in self.selection:
             layer.visible = not layer.visible
 
-    @property
+    @cached_property
     def _extent_world(self) -> np.ndarray:
         """Extent of layers in world coordinates.
 
@@ -185,7 +231,7 @@ class LayerList(SelectableEventedList[Layer]):
 
         return np.vstack([min_v, max_v])
 
-    @property
+    @cached_property
     def _step_size(self) -> np.ndarray:
         """Ideal step size between planes in world coordinates.
 
@@ -211,22 +257,40 @@ class LayerList(SelectableEventedList[Layer]):
     def _get_step_size(self, layer_extent_list):
         if len(self) == 0:
             return np.ones(self.ndim)
-        else:
-            scales = [extent.step for extent in layer_extent_list]
-            min_scales = self._step_size_from_scales(scales)
-            return min_scales
 
-    @property
-    def extent(self) -> Extent:
-        """Extent of layers in data and world coordinates."""
-        extent_list = [layer.extent for layer in self]
+        scales = [extent.step for extent in layer_extent_list]
+        return self._step_size_from_scales(scales)
+
+    def get_extent(self, layers: Iterable[Layer]) -> Extent:
+        """
+        Return extent for a given layer list.
+        This function is useful for calculating the extent of a subset of layers
+        when preparing and updating some supplementary layers.
+        For example see the cross Vectors layer in the `multiple_viewer_widget` example.
+
+        Parameters
+        ----------
+        layers : list of Layer
+            list of layers for which extent should be calculated
+
+        Returns
+        -------
+        extent : Extent
+             extent for selected layers
+        """
+        extent_list = [layer.extent for layer in layers]
         return Extent(
             data=None,
             world=self._get_extent_world(extent_list),
             step=self._get_step_size(extent_list),
         )
 
-    @property
+    @cached_property
+    def extent(self) -> Extent:
+        """Extent of layers in data and world coordinates."""
+        return self.get_extent([x for x in self])
+
+    @cached_property
     def _ranges(self) -> List[Tuple[float, float, float]]:
         """Get ranges for Dims.range in world coordinates.
 
@@ -328,7 +392,7 @@ class LayerList(SelectableEventedList[Layer]):
         *,
         selected: bool = False,
         plugin: Optional[str] = None,
-        _command_id: Optional[str] = None,
+        _writer: Optional['WriterContribution'] = None,
     ) -> List[str]:
         """Save all or only selected layers to a path using writer plugins.
 
@@ -376,6 +440,8 @@ class LayerList(SelectableEventedList[Layer]):
             Name of the plugin to use for saving. If None then all plugins
             corresponding to appropriate hook specification will be looped
             through to find the first one that can save the data.
+        _writer : WriterContribution, optional
+            private: npe2 specific writer override.
 
         Returns
         -------
@@ -384,7 +450,11 @@ class LayerList(SelectableEventedList[Layer]):
         """
         from ..plugins.io import save_layers
 
-        layers = list(self.selection) if selected else list(self)
+        layers = (
+            [x for x in self if x in self.selection]
+            if selected
+            else list(self)
+        )
 
         if selected:
             msg = trans._("No layers selected", deferred=True)
@@ -395,6 +465,4 @@ class LayerList(SelectableEventedList[Layer]):
             warnings.warn(msg)
             return []
 
-        return save_layers(
-            path, layers, plugin=plugin, _command_id=_command_id
-        )
+        return save_layers(path, layers, plugin=plugin, _writer=_writer)

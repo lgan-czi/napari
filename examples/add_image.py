@@ -1,5 +1,8 @@
 """
-Display one image using the add_image API.
+Add image
+=========
+
+Display one image using the ``add_image`` API.
 """
 
 from skimage import data
@@ -15,4 +18,5 @@ qt_viewer = viewer.window.qt_viewer
 thumb = qt_viewer.canvas.make_thumbnail(qt_viewer.layer_to_visual[viewer.layers[0]])
 imsave('~/Desktop/test2.png', thumb)
 
-napari.run()
+if __name__ == '__main__':
+    napari.run()

@@ -8,17 +8,14 @@ from napari_plugin_engine import napari_hook_implementation
 if TYPE_CHECKING:
     from napari.plugins._plugin_manager import NapariPluginManager
 
-from napari._tests.utils import slow
 
-
-@slow(15)
 def test_plugin_discovery_is_delayed():
     """Test that plugins are not getting discovered at napari import time."""
     cmd = [
         sys.executable,
         '-c',
         'import sys; from napari.plugins import plugin_manager; '
-        'sys.exit(len(plugin_manager.plugins) != 2)',  # we have 2 'builtins'
+        'sys.exit(len(plugin_manager.plugins) > 2)',  # we have 2 'builtins'
     ]
     # will fail if plugin discovery happened at import
     proc = subprocess.run(cmd, capture_output=True)
