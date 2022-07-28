@@ -25,8 +25,11 @@ class VispyThumbnail(SceneCanvas):
         # Modify the scale of the transform to make the thumbnail capture
         # the entire field of view.
         extent = layer._extent_world[:, :2]
+        # print('extent', extent)
         size = extent[1] - extent[0]
+        # print('size', size)
         scale = np.array(THUMBNAIL_SIZE) / size
+        # print('scale', scale)
         self.visual.node.transform.scale(scale)
 
     def get_image(self):
