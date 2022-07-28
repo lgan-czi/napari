@@ -1,5 +1,5 @@
-import numpy as np
 from vispy.scene import SceneCanvas
+from vispy.scene.cameras import PanZoomCamera
 
 from napari._vispy import create_vispy_visual
 
@@ -18,19 +18,27 @@ class VispyThumbnail(SceneCanvas):
 
         # Create a visual around the given layer, then attach it to a
         # central view.
-        self.view = self.central_widget.add_view()
+        self.view = self.central_widget.add_view(border_width=0)
         self.visual = create_vispy_visual(layer)
         self.visual.node.parent = self.view
 
         # Modify the scale of the transform to make the thumbnail capture
         # the entire field of view.
-        extent = layer._extent_world[:, :2]
-        # print('extent', extent)
-        size = extent[1] - extent[0]
-        # print('size', size)
-        scale = np.array(THUMBNAIL_SIZE) / size
-        # print('scale', scale)
-        self.visual.node.transform.scale(scale)
+        # extent = layer._extent_world[:, :2]
+        # size = extent[1] - extent[0]
+        # scale = np.array(THUMBNAIL_SIZE) / size
+        # center = extent[0] + (size / 2)
+        # Modifying the node's transform seems to actually changed what is
+        # rendered whereas changing the view's camera does not.
+        # self.visual.node.transform.scale(scale, center)
+        # self.visual.node.transform.scale((0.5, 0.5), (15.5, 15.5))
+        # self.visual.node.update()
+        # camera_rect = list(extent[0]) + list(size)
+        self.view.camera = PanZoomCamera(aspect=1)
+        self.view.camera.flip = (0, 1, 0)
+        self.view.camera.rect = (-0.5, -0.5, 32, 32)
+        self.view.camera.view_changed()
+        self.update()
 
     def get_image(self):
         # Need to take a copy to ensure that QImage is properly constructed
