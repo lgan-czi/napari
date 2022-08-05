@@ -50,6 +50,7 @@ class VispyCanvas(SceneCanvas):
 
     def make_thumbnail(self, vispy_layer: VispyBaseLayer) -> np.ndarray:
         shape = (600, 800, 4)
+        THUMBNAIL_SIZE = (32, 32)
         texture = gloo.Texture2D(shape=shape)
         fbo = gloo.FrameBuffer(texture, gloo.RenderBuffer(shape[:2]))
         self.push_fbo(fbo, offset=(0, 0), csize=shape[:2])
@@ -59,8 +60,11 @@ class VispyCanvas(SceneCanvas):
         node.transform = MatrixTransform()
         extent = vispy_layer.layer._extent_world[:, 1::-1]
         size = extent[1] - extent[0]
-        scales = np.array(shape[:2]) / size
-        scale = [np.min(scales)] * 2
+        print('thumbnail', size)
+        # scales = np.array(shape[:2]) / size
+        # scale = [np.min(scales)] * 2
+        scale = np.array(THUMBNAIL_SIZE) / size
+        print('scale', scale)
         center = extent[0] + (size / 2)
         node.transform.scale(scale, center)
         node.update()
