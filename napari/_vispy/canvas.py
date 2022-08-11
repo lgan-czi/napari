@@ -2,10 +2,14 @@
 """
 from weakref import WeakSet
 
+import numpy as np
 from qtpy.QtCore import QSize
+from vispy import gloo
 from vispy.scene import SceneCanvas, Widget
+from vispy.visuals.transforms import MatrixTransform
 
 from ..utils.colormaps.standardize_color import transform_color
+from .layers.base import VispyBaseLayer
 from .utils.gl import get_max_texture_sizes
 
 
@@ -43,6 +47,32 @@ class VispyCanvas(SceneCanvas):
         self.events.ignore_callback_errors = False
         self.native.setMinimumSize(QSize(200, 200))
         self.context.set_depth_func('lequal')
+
+    def make_thumbnail(self, vispy_layer: VispyBaseLayer) -> np.ndarray:
+        shape = (600, 800, 4)
+        THUMBNAIL_SIZE = (32, 32)
+        texture = gloo.Texture2D(shape=shape)
+        fbo = gloo.FrameBuffer(texture, gloo.RenderBuffer(shape[:2]))
+        self.push_fbo(fbo, offset=(0, 0), csize=shape[:2])
+        self.context.clear(color='green', depth=True)
+        node = vispy_layer.node
+        transform = node.transform
+        node.transform = MatrixTransform()
+        extent = vispy_layer.layer._extent_world[:, 1::-1]
+        size = extent[1] - extent[0]
+        print('thumbnail', size)
+        # scales = np.array(shape[:2]) / size
+        # scale = [np.min(scales)] * 2
+        scale = np.array(THUMBNAIL_SIZE) / size
+        print('scale', scale)
+        center = extent[0] + (size / 2)
+        node.transform.scale(scale, center)
+        node.update()
+        self.draw_visual(node)
+        im = fbo.read()
+        self.pop_fbo()
+        node.transform = transform
+        return im
 
     @property
     def destroyed(self):
