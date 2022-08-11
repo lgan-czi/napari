@@ -10,6 +10,7 @@ from napari.layers import Image
 def test_image():
     # np.random.seed(0)
     data = np.random.randint(255, size=(32, 32, 4), dtype=np.uint8)
+    data = 255 * np.ones((32, 32, 4), dtype=np.uint8)
     plt.imshow(data)
     plt.show()
     # data = 255 * np.ones((32, 32, 4), dtype=np.uint8)
